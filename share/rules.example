@@ -1,0 +1,13 @@
+# handy-guard word rules. saola setup put this file here.
+#
+# Speech recognition sometimes hears a name or a special word wrong. Add one
+# rule per line in the form:   heard words => Correct Words
+# A rule fires only on the exact phrase (case and punctuation do not count).
+# A rule that starts with "^ " fires only at the start of a sentence.
+#
+# Examples (remove the "#" to use one):
+# cube control => kubectl
+# get hub => GitHub
+# ^ except => accept
+#
+# After a change, restart handy-guard:   brew services restart saola

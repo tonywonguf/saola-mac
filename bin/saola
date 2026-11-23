@@ -1,0 +1,276 @@
+#!/bin/bash
+# saola for macOS: local voice dictation with Handy, S1-mini and handy-guard.
+#
+# usage: saola setup [--dry-run]      install and connect all parts
+#        saola status                 show the state of each part
+#        saola test                   send one sample text through the cleanup
+#        saola uninstall [--dry-run]  remove what setup added
+#
+# Environment (for tests): SAOLA_DATA, SAOLA_HANDY_SETTINGS, SAOLA_ALLOW_NON_MAC=1.
+# The script works with the bash 3.2 that comes with macOS.
+set -euo pipefail
+
+VERSION=0.1.0
+REPO=tonywonguf/saola
+TAG=models-v1
+MODEL_FILE=s1-mini-q4_k_m.gguf
+MODEL_SHA256=3b41ebe2502cbd03e811d5d16b022f5ab551eda58d62597d152f89535003c634
+MODEL_BYTES=484219808
+OLLAMA=127.0.0.1:11434
+GUARD=127.0.0.1:11436
+DATA=${SAOLA_DATA:-$HOME/Library/Application Support/saola}
+HANDY_SETTINGS=${SAOLA_HANDY_SETTINGS:-$HOME/Library/Application Support/com.pais.handy/settings_store.json}
+RULES=$HOME/.config/handy-guard/rules
+AGENT_LABEL=com.tonywonguf.handy-guard
+AGENT_PLIST=$HOME/Library/LaunchAgents/$AGENT_LABEL.plist
+
+# Homebrew replaces @LIBEXEC@ and @SHARE@ with the install paths.
+LIBEXEC="@LIBEXEC@"
+SHARE="@SHARE@"
+if [ ! -d "$LIBEXEC" ]; then
+  here=$(cd "$(dirname "$0")/.." && pwd)
+  LIBEXEC=$here/libexec
+  SHARE=$here/share
+fi
+
+DRY=0
+step() { printf '\n== %s\n' "$*"; }
+say() { printf '  %s\n' "$*"; }
+die() {
+  printf 'saola: %s\n' "$*" >&2
+  exit 1
+}
+do_() {
+  if [ "$DRY" = 1 ]; then say "would run: $*"; else "$@"; fi
+}
+have() { command -v "$1" >/dev/null 2>&1; }
+up() { curl -sf -m 2 -o /dev/null "http://$1/$2"; }
+sha256() { shasum -a 256 "$1" | cut -d' ' -f1; }
+uses_brew_service() { have brew && brew list --formula saola >/dev/null 2>&1; }
+
+need_mac() {
+  if [ "$(uname -s)" != Darwin ] && [ "${SAOLA_ALLOW_NON_MAC:-0}" != 1 ]; then
+    die "this is the macOS version. For Linux, use https://github.com/$REPO"
+  fi
+}
+
+wait_for() { # host:port path seconds
+  local i=0
+  while [ "$i" -lt "$3" ]; do
+    up "$1" "$2" && return 0
+    sleep 1
+    i=$((i + 1))
+  done
+  return 1
+}
+
+write_agent() { # a LaunchAgent for handy-guard when Homebrew does not manage it
+  local bin
+  bin=$(command -v handy-guard) || die "handy-guard is not on PATH. Build it with: cargo install --path handy-guard"
+  mkdir -p "$(dirname "$AGENT_PLIST")" "$HOME/Library/Logs"
+  cat >"$AGENT_PLIST" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>$AGENT_LABEL</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>$bin</string><string>serve</string>
+    <string>--listen</string><string>$GUARD</string>
+    <string>--upstream</string><string>$OLLAMA</string>
+  </array>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>StandardErrorPath</key><string>$HOME/Library/Logs/handy-guard.log</string>
+</dict>
+</plist>
+EOF
+  launchctl bootout "gui/$(id -u)/$AGENT_LABEL" 2>/dev/null || true
+  launchctl bootstrap "gui/$(id -u)" "$AGENT_PLIST"
+}
+
+handy_running() { pgrep -x Handy >/dev/null 2>&1 || pgrep -x handy >/dev/null 2>&1; }
+
+quit_handy() {
+  handy_running || return 0
+  osascript -e 'quit app "Handy"' >/dev/null 2>&1 || true
+  local i=0
+  while handy_running && [ "$i" -lt 10 ]; do
+    sleep 1
+    i=$((i + 1))
+  done
+  if handy_running; then die "Handy did not quit. Quit it from the menu bar and run 'saola setup' again."; fi
+}
+
+cmd_setup() {
+  need_mac
+  step "1. Homebrew"
+  if have brew; then say "found $(brew --version | head -1)"; else die "install Homebrew first: https://brew.sh"; fi
+
+  step "2. Ollama (runs S1-mini on the Mac GPU)"
+  if have ollama; then say "found $(command -v ollama)"; else do_ brew install ollama; fi
+
+  step "3. Handy (records your voice and turns speech into text)"
+  if [ -d /Applications/Handy.app ] || [ -d "$HOME/Applications/Handy.app" ]; then
+    say "found Handy.app"
+  else
+    do_ brew install --cask handy
+  fi
+
+  step "4. Start the Ollama server on $OLLAMA"
+  if up "$OLLAMA" api/version; then
+    say "already running"
+  else
+    do_ brew services start ollama
+    if [ "$DRY" = 0 ] && ! wait_for "$OLLAMA" api/version 30; then
+      die "Ollama does not answer on $OLLAMA. Look at: brew services info ollama"
+    fi
+  fi
+
+  step "5. S1-mini, the cleanup model ($((MODEL_BYTES / 1000000)) MB)"
+  if [ "$DRY" = 0 ] && ollama list 2>/dev/null | grep -q '^s1-mini'; then
+    say "already in Ollama"
+  else
+    local f="$DATA/models/$MODEL_FILE"
+    if [ -f "$f" ] && [ "$(sha256 "$f")" = "$MODEL_SHA256" ]; then
+      say "already downloaded"
+    elif [ "$DRY" = 1 ]; then
+      say "would download https://github.com/$REPO/releases/download/$TAG/$MODEL_FILE"
+      say "would make sure that its SHA-256 value is $MODEL_SHA256"
+    else
+      mkdir -p "$DATA/models"
+      curl -fL --progress-bar -o "$f.part" "https://github.com/$REPO/releases/download/$TAG/$MODEL_FILE"
+      if [ "$(sha256 "$f.part")" != "$MODEL_SHA256" ]; then
+        rm -f "$f.part"
+        die "the SHA-256 value of $MODEL_FILE is not correct. The file is erased."
+      fi
+      mv "$f.part" "$f"
+      say "SHA-256 is correct"
+    fi
+    if [ "$DRY" = 1 ]; then
+      say "would run: ollama create s1-mini -f $DATA/models/Modelfile"
+    else
+      cp "$SHARE/Modelfile.s1-mini" "$DATA/models/Modelfile"
+      (cd "$DATA/models" && ollama create s1-mini -f Modelfile)
+    fi
+  fi
+
+  step "6. Word rules for handy-guard ($RULES)"
+  if [ -f "$RULES" ]; then
+    say "already there"
+  else
+    do_ mkdir -p "$(dirname "$RULES")"
+    do_ cp "$SHARE/rules.example" "$RULES"
+  fi
+
+  step "7. Start handy-guard on $GUARD"
+  if uses_brew_service; then
+    do_ brew services restart saola
+  else
+    if [ "$DRY" = 1 ]; then say "would write $AGENT_PLIST and load it"; else write_agent; fi
+  fi
+  if [ "$DRY" = 0 ] && ! wait_for "$GUARD" v1/models 15; then
+    die "handy-guard does not answer on $GUARD. Look at: saola status"
+  fi
+
+  step "8. Keep S1-mini loaded"
+  do_ curl -sf -m 60 -o /dev/null "http://$OLLAMA/api/generate" -d '{"model":"s1-mini","keep_alive":-1}'
+
+  step "9. Handy cleanup settings"
+  if [ ! -f "$HANDY_SETTINGS" ]; then
+    say "Handy has no settings file yet. Do these steps one time:"
+    say "  1. Open Handy. Give it access to the microphone and to Accessibility."
+    say "  2. In Handy, download a Parakeet model and make one dictation."
+    say "  3. Quit Handy from the menu bar."
+    say "  4. Run 'saola setup' again."
+    return 0
+  fi
+  if [ "$DRY" = 1 ]; then
+    python3 "$LIBEXEC/saola-configure-handy" "$HANDY_SETTINGS" --dry-run
+  else
+    quit_handy
+    [ -f "$HANDY_SETTINGS.bak-saola" ] || cp "$HANDY_SETTINGS" "$HANDY_SETTINGS.bak-saola"
+    python3 "$LIBEXEC/saola-configure-handy" "$HANDY_SETTINGS"
+    open -a Handy || say "open Handy yourself"
+  fi
+
+  step "Done"
+  say "Hold Option+Shift+Space, speak, and release. Handy types the cleaned text."
+  say "Option+Space gives the raw text with no cleanup."
+  say "Run 'saola test' to try the cleanup without the microphone."
+}
+
+cmd_status() {
+  need_mac
+  printf 'saola %s\n' "$VERSION"
+  if up "$OLLAMA" api/version; then echo "ollama      running on $OLLAMA"; else echo "ollama      NOT running (brew services start ollama)"; fi
+  if have ollama && ollama list 2>/dev/null | grep -q '^s1-mini'; then echo "s1-mini     in Ollama"; else echo "s1-mini     missing (saola setup)"; fi
+  if up "$GUARD" v1/models; then echo "handy-guard running on $GUARD"; else echo "handy-guard NOT running (saola setup)"; fi
+  if [ -f "$HANDY_SETTINGS" ] && grep -q 'localhost:11436' "$HANDY_SETTINGS"; then
+    echo "handy       cleanup goes to handy-guard"
+  else
+    echo "handy       cleanup not set (open Handy one time, quit it, then saola setup)"
+  fi
+}
+
+cmd_test() {
+  up "$GUARD" v1/models || die "handy-guard is not running. Run: saola setup"
+  local text="um so i think we should uh meet on tuesday no wait wednesday at three"
+  echo "in:  $text"
+  printf 'out: '
+  curl -sf -m 60 "http://$GUARD/v1/chat/completions" -H 'Content-Type: application/json' -d "{
+    \"model\": \"s1-mini\", \"reasoning_effort\": \"none\",
+    \"messages\": [{\"role\": \"user\", \"content\": \"[Styling: semi-formal] [Structure: prose] [Context: general]\\n$text\"}]
+  }" | python3 -c 'import json,sys; print(json.load(sys.stdin)["choices"][0]["message"]["content"].strip())'
+}
+
+cmd_uninstall() {
+  need_mac
+  step "1. Stop handy-guard"
+  if uses_brew_service; then
+    do_ brew services stop saola
+  elif [ -f "$AGENT_PLIST" ]; then
+    do_ launchctl bootout "gui/$(id -u)/$AGENT_LABEL"
+    do_ rm -f "$AGENT_PLIST"
+  else
+    say "not installed as a service"
+  fi
+  step "2. Put back the Handy settings from before saola"
+  if [ -f "$HANDY_SETTINGS.bak-saola" ]; then
+    if [ "$DRY" = 1 ]; then say "would quit Handy and copy $HANDY_SETTINGS.bak-saola back"; else
+      quit_handy
+      mv "$HANDY_SETTINGS.bak-saola" "$HANDY_SETTINGS"
+      say "done"
+    fi
+  else
+    say "no backup, nothing to do"
+  fi
+  step "3. Remove S1-mini from Ollama and erase the downloaded model"
+  if have ollama; then do_ ollama rm s1-mini || true; fi
+  do_ rm -rf "$DATA"
+  say "Handy, Ollama and $RULES stay. Remove them yourself if you want:"
+  say "  brew uninstall --cask handy; brew uninstall ollama; rm $RULES"
+}
+
+main() {
+  local cmd=${1:-help}
+  [ $# -gt 0 ] && shift
+  for a in "$@"; do
+    case "$a" in
+      --dry-run) DRY=1 ;;
+      *) die "unknown option: $a" ;;
+    esac
+  done
+  case "$cmd" in
+    setup) cmd_setup ;;
+    status) cmd_status ;;
+    test) cmd_test ;;
+    uninstall) cmd_uninstall ;;
+    version | --version) echo "saola $VERSION" ;;
+    help | -h | --help) sed -n '2,10p' "$0" | sed 's/^# \{0,1\}//' ;;
+    *) die "unknown command: $cmd (try: saola help)" ;;
+  esac
+}
+
+main "$@"
