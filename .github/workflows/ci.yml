@@ -54,7 +54,9 @@ jobs:
       - name: brew install
         run: HOMEBREW_NO_INSTALL_FROM_API=1 brew install --build-from-source local/saola/saola
       - name: brew test
-        run: brew test local/saola/saola
+        run: |
+          brew upgrade ollama || true
+          brew test local/saola/saola
       - name: saola is on PATH and finds its files
         run: |
           saola version
