@@ -52,7 +52,7 @@ jobs:
           sed -e "s|^  url .*|  url \"file://$RUNNER_TEMP/src/v0.1.0.tar.gz\"|" \
               -e "s|@SHA256@|$sha|" Formula/saola.rb > "$tap/Formula/saola.rb"
       - name: brew install
-        run: HOMEBREW_NO_INSTALL_FROM_API=1 brew install --build-from-source local/saola/saola
+        run: brew install --build-from-source local/saola/saola
       - name: brew test
         run: |
           brew upgrade ollama || true
