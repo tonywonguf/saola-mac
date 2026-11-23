@@ -1,0 +1,22 @@
+name: tap
+
+# A user's install from the public tap, on a clean macOS machine. Start it by hand
+# after each release: gh workflow run tap.yml -R tonywonguf/saola-mac
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  install:
+    runs-on: macos-latest
+    steps:
+      - name: brew install from the tap
+        run: brew install tonywonguf/saola/saola
+      - name: brew test
+        run: brew test tonywonguf/saola/saola
+      - name: saola runs
+        run: |
+          saola version
+          saola help
