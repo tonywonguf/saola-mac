@@ -45,11 +45,11 @@ jobs:
       - name: Formula from this commit in a local tap
         run: |
           mkdir -p "$RUNNER_TEMP/src"
-          git archive --prefix=saola-mac-0.1.0/ -o "$RUNNER_TEMP/src/v0.1.0.tar.gz" HEAD
-          sha=$(shasum -a 256 "$RUNNER_TEMP/src/v0.1.0.tar.gz" | cut -d' ' -f1)
+          git archive --prefix=saola-mac-0.1.1/ -o "$RUNNER_TEMP/src/v0.1.1.tar.gz" HEAD
+          sha=$(shasum -a 256 "$RUNNER_TEMP/src/v0.1.1.tar.gz" | cut -d' ' -f1)
           brew tap-new --no-git local/saola
           tap=$(brew --repository)/Library/Taps/local/homebrew-saola
-          sed -e "s|^  url .*|  url \"file://$RUNNER_TEMP/src/v0.1.0.tar.gz\"|" \
+          sed -e "s|^  url .*|  url \"file://$RUNNER_TEMP/src/v0.1.1.tar.gz\"|" \
               -e "s|@SHA256@|$sha|" Formula/saola.rb > "$tap/Formula/saola.rb"
       - name: brew install
         run: brew install --build-from-source local/saola/saola
