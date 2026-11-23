@@ -3,7 +3,7 @@
 //!   handy-guard serve [--listen ADDR] [--upstream ADDR] [--rules FILE] [--deadline-ms N]
 //!       Run the proxy between Handy and the cleanup model server.
 //!       Defaults: listen 127.0.0.1:11436, upstream 127.0.0.1:11435,
-//!       rules ~/.config/handy-guard/rules (built-in rules when the file does not exist).
+//!       rules ~/.config/handy-guard/rules (no rules when the file does not exist).
 //!
 //!   handy-guard rules-check OUT_DIR [--rules FILE]
 //!       Offline check on saved recordings. OUT_DIR is the research/out folder of the
@@ -18,7 +18,7 @@
 //!   handy-guard eval OUT_DIR [MIN_P]
 //!       Research: the confidence guard (put back confident words that cleanup changed).
 
-use handy_guard::rules::{apply, parse_rules, Rule, DEFAULT_RULES};
+use handy_guard::rules::{apply, parse_rules, Rule};
 use handy_guard::{guard, norm, parse_cli_tokens, serve, Params};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -54,7 +54,7 @@ fn load_rules(args: &[String]) -> Vec<Rule> {
         .unwrap_or_else(|| home().join(".config/handy-guard/rules"));
     match fs::read_to_string(&path) {
         Ok(t) => parse_rules(&t),
-        Err(_) => parse_rules(DEFAULT_RULES),
+        Err(_) => Vec::new(), // No rules file: no rules. DEFAULT_RULES is test data of the author.
     }
 }
 

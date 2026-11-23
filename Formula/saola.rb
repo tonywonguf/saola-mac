@@ -3,7 +3,7 @@
 class Saola < Formula
   desc "Local voice dictation: Handy speech-to-text plus S1-mini cleanup, no cloud"
   homepage "https://github.com/tonywonguf/saola-mac"
-  url "https://github.com/tonywonguf/saola-mac/archive/refs/tags/v0.1.0.tar.gz"
+  url "https://github.com/tonywonguf/saola-mac/archive/refs/tags/v0.1.1.tar.gz"
   sha256 "@SHA256@"
   license "PolyForm-Noncommercial-1.0.0"
   head "https://github.com/tonywonguf/saola-mac.git", branch: "main"

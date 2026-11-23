@@ -10,7 +10,7 @@
 # The script works with the bash 3.2 that comes with macOS.
 set -euo pipefail
 
-VERSION=0.1.0
+VERSION=0.1.1
 REPO=tonywonguf/saola
 TAG=models-v1
 MODEL_FILE=s1-mini-q4_k_m.gguf
@@ -190,7 +190,11 @@ cmd_setup() {
     python3 "$LIBEXEC/saola-configure-handy" "$HANDY_SETTINGS" --dry-run
   else
     quit_handy
-    [ -f "$HANDY_SETTINGS.bak-saola" ] || cp "$HANDY_SETTINGS" "$HANDY_SETTINGS.bak-saola"
+    # The settings file can hold API keys. The backup is readable only by you.
+    if [ ! -f "$HANDY_SETTINGS.bak-saola" ]; then
+      (umask 077 && cp "$HANDY_SETTINGS" "$HANDY_SETTINGS.bak-saola")
+      chmod 600 "$HANDY_SETTINGS.bak-saola"
+    fi
     python3 "$LIBEXEC/saola-configure-handy" "$HANDY_SETTINGS"
     open -a Handy || say "open Handy yourself"
   fi
@@ -248,7 +252,10 @@ cmd_uninstall() {
   fi
   step "3. Remove S1-mini from Ollama and erase the downloaded model"
   if have ollama; then do_ ollama rm s1-mini || true; fi
-  do_ rm -rf "$DATA"
+  case "$DATA" in
+    */saola | */saola/) do_ rm -rf "$DATA" ;;
+    *) say "SAOLA_DATA ($DATA) does not end in /saola. Erase it yourself." ;;
+  esac
   say "Handy, Ollama and $RULES stay. Remove them yourself if you want:"
   say "  brew uninstall --cask handy; brew uninstall ollama; rm $RULES"
 }
