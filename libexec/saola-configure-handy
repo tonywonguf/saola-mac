@@ -1,0 +1,73 @@
+#!/usr/bin/env python3
+"""Sets the Handy cleanup settings that saola needs on macOS. Stdlib only.
+
+usage: saola-configure-handy SETTINGS_JSON [--dry-run]
+
+The script changes only the cleanup (post-processing) settings: the "custom"
+provider goes to handy-guard on port 11436, the model is s1-mini, and the
+S1-mini prompt is selected. The speech model, the paste method and the keys
+stay as Handy set them.
+
+Handy writes its settings file while it runs. Quit Handy before you use this
+script. The caller (saola setup) makes the backup.
+"""
+import json
+import sys
+
+PROMPT_ID = "s1_mini_cleanup"
+PROMPT = "[Styling: semi-formal] [Structure: prose] [Context: general]\n${output}"
+GUARD_URL = "http://localhost:11436/v1"
+
+
+def apply(s):
+    s["post_process_enabled"] = True
+    s["post_process_provider_id"] = "custom"
+    s["post_process_selected_prompt_id"] = PROMPT_ID
+    providers = s.setdefault("post_process_providers", [])
+    custom = next((p for p in providers if p.get("id") == "custom"), None)
+    if custom is None:
+        custom = {
+            "id": "custom",
+            "label": "Custom",
+            "allow_base_url_edit": True,
+            "models_endpoint": "/models",
+            "supports_structured_output": False,
+        }
+        providers.append(custom)
+    custom["base_url"] = GUARD_URL
+    s.setdefault("post_process_models", {})["custom"] = "s1-mini"
+    prompts = [p for p in s.get("post_process_prompts", []) if p.get("id") != PROMPT_ID]
+    prompts.append({"id": PROMPT_ID, "name": "S1-mini cleanup", "prompt": PROMPT})
+    s["post_process_prompts"] = prompts
+    return s
+
+
+def main(argv):
+    args = [a for a in argv[1:] if not a.startswith("--")]
+    if len(args) != 1:
+        print(__doc__, file=sys.stderr)
+        return 2
+    path = args[0]
+    with open(path) as f:
+        data = json.load(f)
+    settings = data.get("settings")
+    if not isinstance(settings, dict):
+        print("  The Handy settings file has no 'settings' object. Open Handy one time first.",
+              file=sys.stderr)
+        return 1
+    before = json.dumps(settings, sort_keys=True)
+    apply(settings)
+    if json.dumps(settings, sort_keys=True) == before:
+        print("  Handy settings are already correct")
+        return 0
+    if "--dry-run" in argv:
+        print("  would change the Handy cleanup settings (s1-mini through handy-guard on port 11436)")
+        return 0
+    with open(path, "w") as f:
+        json.dump(data, f, indent=2)
+    print("  Handy cleanup settings changed")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))
