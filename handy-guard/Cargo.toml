@@ -1,0 +1,12 @@
+[package]
+name = "handy-guard"
+version = "0.1.0"
+edition = "2021"
+description = "Keeps Handy's text cleanup from changing words that the speech model heard with high confidence"
+license = "PolyForm-Noncommercial-1.0.0"
+
+[dependencies]
+serde_json = "1"
+
+[profile.release]
+opt-level = 3

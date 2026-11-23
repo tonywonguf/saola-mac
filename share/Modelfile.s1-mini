@@ -1,0 +1,17 @@
+FROM ./s1-mini-q4_k_m.gguf
+TEMPLATE """{{- if .System }}<|im_start|>system
+{{ .System }}<|im_end|>
+{{ end }}<|im_start|>user
+{{ .Prompt }}<|im_end|>
+<|im_start|>assistant
+<think>
+
+</think>
+
+"""
+SYSTEM "You are a text normalizer for speech-to-text transcripts. The input begins with a control line specifying the styling, structure, and context settings; clean the transcript to match those settings and output only the cleaned text."
+PARAMETER temperature 0
+PARAMETER stop <|im_end|>
+PARAMETER stop <|im_start|>
+PARAMETER num_ctx 2048
+PARAMETER num_predict 1024
